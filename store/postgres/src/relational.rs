@@ -8,7 +8,8 @@
 //! information about mapping a GraphQL schema to database tables
 use diesel::connection::SimpleConnection;
 use diesel::{
-    debug_query, ExpressionMethods, OptionalExtension, PgConnection, QueryDsl, RunQueryDsl,
+    debug_query, Connection, ExpressionMethods, OptionalExtension, PgConnection, QueryDsl,
+    RunQueryDsl,
 };
 use graphql_parser::query as q;
 use graphql_parser::schema as s;
@@ -58,6 +59,20 @@ lazy_static! {
             .ok()
             .map(|v| v.split(",").map(|s| s.to_owned()).collect())
             .unwrap_or(HashSet::new())
+    };
+
+    /// `GRAPH_SQL_STATEMENT_TIMEOUT` is the timeout for queries in seconds.
+    /// If it is not set, no statement timeout will be enforced. The statement
+    /// timeout is local, i.e., can only be used within a transaction and
+    /// will be cleared at the end of the transaction
+    static ref STATEMENT_TIMEOUT: Option<String> = {
+        env::var("GRAPH_SQL_STATEMENT_TIMEOUT")
+        .ok()
+        .map(|s| {
+            u64::from_str(&s).unwrap_or_else(|_| {
+                panic!("GRAPH_SQL_STATEMENT_TIMEOUT must be a number, but is `{}`", s)
+            })
+        }).map(|timeout| format!("set local statement_timeout={}", timeout * 1000))
     };
 }
 
@@ -629,13 +644,20 @@ impl Layout {
         let query_clone = query.clone();
 
         let start = Instant::now();
-        let values = query.load::<EntityData>(conn).map_err(|e| {
-            QueryExecutionError::ResolveEntitiesError(format!(
-                "{}, query = {:?}",
-                e,
-                debug_query(&query_clone).to_string()
-            ))
-        })?;
+        let values = conn
+            .transaction(|| {
+                if let Some(ref timeout_sql) = *STATEMENT_TIMEOUT {
+                    conn.batch_execute(timeout_sql)?;
+                }
+                query.load::<EntityData>(conn)
+            })
+            .map_err(|e| {
+                QueryExecutionError::ResolveEntitiesError(format!(
+                    "{}, query = {:?}",
+                    e,
+                    debug_query(&query_clone).to_string()
+                ))
+            })?;
         log_query_timing(logger, &query_clone, start.elapsed(), values.len());
         values
             .into_iter()
