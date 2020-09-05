@@ -35,6 +35,7 @@ use graph_server_metrics::PrometheusMetricsServer;
 use graph_server_websocket::SubscriptionServer as GraphQLSubscriptionServer;
 use graph_store_postgres::connection_pool::create_connection_pool;
 use graph_store_postgres::{
+    register_jobs as register_store_jobs,
     ChainHeadUpdateListener as PostgresChainHeadUpdateListener, Store as DieselStore, StoreConfig,
     SubscriptionManager,
 };
@@ -779,6 +780,11 @@ async fn main() {
                         // Run the Ethereum block ingestor in the background
                         graph::spawn(block_ingestor.into_polling_stream());
                     });
+
+                // Start a task runner
+                let mut job_runner = graph::util::jobs::Runner::new(&logger);
+                register_store_jobs(&mut job_runner, generic_store.clone());
+                std::thread::spawn(move || job_runner.start());
             }
 
             let block_stream_builder = BlockStreamBuilder::new(
