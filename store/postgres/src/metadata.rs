@@ -15,6 +15,29 @@ use graph::prelude::{
 //    cargo run -p graph-store-postgres --example layout -- \
 //      -g diesel store/postgres/src/subgraphs.graphql subgraphs
 table! {
+    subgraphs.subgraph (vid) {
+        id -> Text,
+        name -> Text,
+        current_version -> Nullable<Text>,
+        pending_version -> Nullable<Text>,
+        created_at -> Numeric,
+        vid -> Int8,
+        block_range -> Int4range,
+    }
+}
+
+table! {
+    subgraphs.subgraph_version (vid) {
+        id -> Text,
+        subgraph -> Text,
+        deployment -> Text,
+        created_at -> Numeric,
+        vid -> Int8,
+        block_range -> Int4range,
+    }
+}
+
+table! {
     subgraphs.subgraph_deployment (vid) {
         vid -> BigInt,
         id -> Text,
@@ -33,6 +56,16 @@ table! {
         graft_block_hash -> Nullable<Binary>,
         graft_block_number -> Nullable<Numeric>,
         block_range -> Range<Integer>,
+    }
+}
+
+table! {
+    subgraphs.subgraph_deployment_assignment (vid) {
+        id -> Text,
+        node_id -> Text,
+        cost -> Numeric,
+        vid -> Int8,
+        block_range -> Int4range,
     }
 }
 
@@ -80,6 +113,19 @@ table! {
         block_range -> Range<Integer>,
     }
 }
+
+use crate::entities::public::deployment_schemas;
+
+allow_tables_to_appear_in_same_query!(
+    deployment_schemas,
+    dynamic_ethereum_contract_data_source,
+    ethereum_contract_data_source,
+    subgraph,
+    subgraph_deployment,
+    subgraph_deployment_assignment,
+    subgraph_manifest,
+    subgraph_version
+);
 
 /// Look up the graft point for the given subgraph in the database and
 /// return it

@@ -111,7 +111,7 @@ pub(crate) trait EntitySource {}
 // Tables in the public schema that are shared across subgraphs. We put them
 // in this module to make sure that nobody else gets access to them. All
 // access to these tables must go through functions in this module.
-mod public {
+pub(crate) mod public {
     table! {
         event_meta_data (id) {
             id -> Integer,
@@ -208,10 +208,10 @@ use public::deployment_schemas;
 /// - each migration step is run in its own database transaction
 #[derive(Queryable, QueryableByName, Debug)]
 #[table_name = "deployment_schemas"]
-struct Schema {
+pub struct Schema {
     id: i32,
-    subgraph: String,
-    name: String,
+    pub subgraph: String,
+    pub name: String,
     /// The version currently in use. While we are migrating, the version
     /// will remain at the old version until the new version is ready to use.
     /// Migrations should update this field as the very last operation they
@@ -914,7 +914,7 @@ impl Connection<'_> {
 
 // Find the database schema for `subgraph`. If no explicit schema exists,
 // return `None`.
-fn find_schema(
+pub(crate) fn find_schema(
     conn: &diesel::pg::PgConnection,
     subgraph: &SubgraphDeploymentId,
 ) -> Result<Option<Schema>, StoreError> {
