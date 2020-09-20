@@ -2823,7 +2823,7 @@ impl<'a> QueryFragment<Pg> for CopyDynamicDataSourceQuery<'a> {
         // in the function `print_copy_dds`
         // See also: ed42d219c6704a4aab57ce1ea66698e7
         // The query must be regenerated when the GraphQL schema changes
-        const QUERY: &str = include_str!("copy_dds.sql");
+        const QUERY: &str = include_str!("./sql/copy_dds.sql");
 
         out.unsafe_to_cache_prepared();
         out.push_sql(QUERY);
