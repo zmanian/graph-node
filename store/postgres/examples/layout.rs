@@ -1,9 +1,11 @@
-extern crate clap;
 extern crate graph_store_postgres;
+extern crate structopt;
 
-use clap::App;
+use std::collections::BTreeMap;
 use std::fs;
+use std::iter::FromIterator;
 use std::process::exit;
+use structopt::StructOpt;
 
 use graph::prelude::{Schema, SubgraphDeploymentId};
 use graph_store_postgres::relational::{Catalog, Column, ColumnType, Layout};
@@ -12,6 +14,33 @@ pub fn usage(msg: &str) -> ! {
     println!("layout: {}", msg);
     println!("Try 'layout --help' for more information.");
     std::process::exit(1);
+}
+
+#[derive(StructOpt, Debug)]
+#[structopt(
+    name = "layout",
+    version = "1.0",
+    about = "Information about the database schema for a GraphQL schema"
+)]
+pub struct Opts {
+    #[structopt(
+        short,
+        long,
+        default_value = "rel",
+        about = "the name of the database schema"
+    )]
+    pub db_schema: String,
+
+    #[structopt(name = "the GraphQL schema file")]
+    pub schema: String,
+
+    #[structopt(
+        short,
+        long,
+        default_value = "ddl",
+        about = "the kind of SQL to generate"
+    )]
+    pub generator: String,
 }
 
 pub fn ensure<T, E: std::fmt::Display>(res: Result<T, E>, msg: &str) -> T {
@@ -25,6 +54,9 @@ pub fn ensure<T, E: std::fmt::Display>(res: Result<T, E>, msg: &str) -> T {
 }
 
 fn print_migration(layout: &Layout) {
+    print_drop_views(&layout);
+    print_ddl(&layout);
+
     for table in layout.tables.values() {
         print!("insert into\n  {}(", table.qualified_name);
         for column in &table.columns {
@@ -302,47 +334,40 @@ fn print_list_metadata(layout: &Layout) {
 }
 
 pub fn main() {
-    let args = App::new("layout")
-    .version("1.0")
-    .about("Information about the database schema for a GraphQL schema")
-    .args_from_usage(
-        "-g, --generate=[KIND] 'what kind of SQL to generate. Can be ddl (the default), migrate, delete, or drop'
-        <schema>
-        [db_schema]"
-    )
-    .get_matches();
-
-    let schema = args.value_of("schema").unwrap();
-    let db_schema = args.value_of("db_schema").unwrap_or("rel");
-    let kind = args.value_of("generate").unwrap_or("ddl");
+    type Generator = fn(&Layout);
+    let generators: BTreeMap<&str, Generator> = BTreeMap::from_iter(vec![
+        ("drop", print_drop as Generator),
+        ("migrate", print_migration),
+        ("delete", print_delete_all),
+        ("ddl", print_ddl),
+        ("views", print_views),
+        ("drop-views", print_drop_views),
+        ("diesel", print_diesel_tables),
+        ("list-metadata", print_list_metadata),
+        ("copy-dds", print_copy_dds),
+    ]);
+    let opts = Opts::from_args();
 
     let subgraph = SubgraphDeploymentId::new("Qmasubgraph").unwrap();
-    let schema = ensure(fs::read_to_string(schema), "Can not read schema file");
+    let schema = ensure(fs::read_to_string(&opts.schema), "Can not read schema file");
     let schema = ensure(Schema::parse(&schema, subgraph), "Failed to parse schema");
     let catalog = ensure(
-        Catalog::make_empty(db_schema.to_owned()),
+        Catalog::make_empty(opts.db_schema.to_owned()),
         "Failed to construct catalog",
     );
     let layout = ensure(
         Layout::new(&schema, catalog, false),
         "Failed to construct Mapping",
     );
-    match kind {
-        "migrate" => {
-            print_drop_views(&layout);
-            print_ddl(&layout);
-            print_migration(&layout);
+    let gen = generators.get(opts.generator.as_str());
+    match gen {
+        None => {
+            println!("Generator `{}` does not exist", &opts.generator);
+            println!("These generators are available:");
+            for name in generators.keys() {
+                println!("  - {}", name);
+            }
         }
-        "drop" => print_drop(&layout),
-        "delete" => print_delete_all(&layout),
-        "ddl" => print_ddl(&layout),
-        "views" => print_views(&layout),
-        "drop-views" => print_drop_views(&layout),
-        "diesel" => print_diesel_tables(&layout),
-        "list-metadata" => print_list_metadata(&layout),
-        "copy-dds" => print_copy_dds(&layout),
-        _ => {
-            usage(&format!("illegal value {} for --generate", kind));
-        }
+        Some(gen) => gen(&layout),
     }
 }

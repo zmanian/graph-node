@@ -1646,7 +1646,6 @@ dependencies = [
  "Inflector",
  "async-trait",
  "blake3",
- "clap",
  "derive_more",
  "diesel",
  "diesel-derive-enum",
@@ -1669,6 +1668,7 @@ dependencies = [
  "rand 0.6.5",
  "serde 1.0.116",
  "stable-hash",
+ "structopt",
  "test-store",
  "uuid 0.8.1",
 ]
