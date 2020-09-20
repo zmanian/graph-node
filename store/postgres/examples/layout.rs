@@ -333,6 +333,45 @@ fn print_list_metadata(layout: &Layout) {
     println!(" order by entity, id");
 }
 
+fn print_remove_metadata(layout: &Layout) {
+    let mut tables = layout
+        .tables
+        .values()
+        .filter(|table| {
+            table.name.as_str() != "subgraph" && table.name.as_str() != "subgraph_version"
+        })
+        .collect::<Vec<_>>();
+    tables.sort_by_key(|table| table.name.as_str());
+
+    println!("with dds as (");
+    println!("  select *");
+    println!("    from subgraphs.dynamic_ethereum_contract_data_source");
+    print!("   where deployment = $1)");
+    for (i, table) in tables.iter().enumerate() {
+        println!(",");
+        println!(
+            "  md{} as (delete from {} e",
+            i,
+            table.qualified_name.as_str().replace("\"", "")
+        );
+        if table.name.as_str() == "dynamic_ethereum_contract_data_source" {
+            println!("    where e.deployment = $1");
+        } else {
+            println!("    where left(e.id, 46) = $1 or left(e.id, 40) in (select id from dds)");
+        }
+        print!("    returning e.id)");
+    }
+    println!("");
+    println!("select sum(rows) as metadata_count from (");
+    for i in 0..tables.len() {
+        if i > 0 {
+            println!(" union all");
+        }
+        println!("  select count(*) as rows from md{}", i);
+    }
+    println!(") a");
+}
+
 pub fn main() {
     type Generator = fn(&Layout);
     let generators: BTreeMap<&str, Generator> = BTreeMap::from_iter(vec![
@@ -344,6 +383,7 @@ pub fn main() {
         ("drop-views", print_drop_views),
         ("diesel", print_diesel_tables),
         ("list-metadata", print_list_metadata),
+        ("remove-metadata", print_remove_metadata),
         ("copy-dds", print_copy_dds),
     ]);
     let opts = Opts::from_args();
