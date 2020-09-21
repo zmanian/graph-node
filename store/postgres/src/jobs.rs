@@ -6,12 +6,12 @@ use diesel::prelude::{
 };
 use diesel::{connection::SimpleConnection, sql_query, sql_types::Text, Connection, PgConnection};
 
-use std::sync::Arc;
 use std::time::{Duration, Instant};
+use std::{collections::HashSet, sync::Arc};
 
-use graph::components::store::StoreError;
-use graph::prelude::{error, info, Logger, SubgraphDeploymentId};
+use graph::prelude::{bigdecimal::ToPrimitive, error, info, Logger, SubgraphDeploymentId};
 use graph::util::jobs::{Job, Runner};
+use graph::{components::store::StoreError, prelude::BigDecimal};
 
 use crate::entities::{find_schema, Schema as DeploymentSchema};
 use crate::Store;
@@ -63,7 +63,7 @@ struct RemoveDeploymentsJob {
 }
 
 impl RemoveDeploymentsJob {
-    pub fn next_removable_deployment(
+    fn next_removable_deployment(
         conn: &PgConnection,
     ) -> Result<Option<DeploymentSchema>, StoreError> {
         use crate::entities::public::deployment_schemas as ds;
@@ -104,12 +104,100 @@ impl RemoveDeploymentsJob {
         }
     }
 
-    pub fn remove_deployment(
+    // Remove any versions pointing at the deployment and return the
+    // earliest `created_at` and a comma-separated list of subgraphs that used
+    // the deployment
+    fn remove_versions(
         conn: &PgConnection,
         deployment: &DeploymentSchema,
-    ) -> Result<i32, StoreError> {
-        use crate::entities::public::deployment_schemas as ds;
+    ) -> Result<(Option<i32>, String), StoreError> {
+        use crate::metadata::subgraph as s;
         use crate::metadata::subgraph_version as v;
+        let removed = diesel::delete(v::table)
+            .filter(v::deployment.eq(&deployment.subgraph))
+            .returning((v::created_at, v::subgraph))
+            .load::<(BigDecimal, String)>(conn)?;
+        let created_at = removed
+            .iter()
+            .map(|(ts, _)| ts.to_i32())
+            .filter_map(|ts| ts)
+            .min();
+        let subgraphs = removed
+            .iter()
+            .map(|(_, subgraph)| subgraph)
+            .collect::<HashSet<_>>();
+        let subgraphs = s::table
+            .select(s::name)
+            .filter(s::id.eq_any(subgraphs))
+            .load::<String>(conn)?
+            .join(",");
+        Ok((created_at, subgraphs))
+    }
+
+    // Record that we removed the subgraph in `removed_deployments`
+    fn record_removal(
+        conn: &PgConnection,
+        deployment: &DeploymentSchema,
+        created_at: Option<i32>,
+        subgraphs: String,
+    ) -> Result<Option<i32>, StoreError> {
+        use crate::metadata::removed_deployments as rd;
+        use crate::metadata::subgraph_deployment as d;
+        use crate::metadata::subgraph_sizes as sz;
+
+        let (entity_count, latest_block_number) = d::table
+            .select((d::entity_count, d::latest_ethereum_block_number))
+            .filter(d::id.eq(&deployment.subgraph))
+            .get_result::<(BigDecimal, Option<BigDecimal>)>(conn)?;
+        let entity_count = entity_count.to_i32();
+        let latest_block_number = latest_block_number.and_then(|l| l.to_i32());
+
+        let sizes = sz::table
+            .select((
+                sz::row_estimate,
+                sz::total_bytes,
+                sz::index_bytes,
+                sz::toast_bytes,
+                sz::table_bytes,
+            ))
+            .filter(sz::subgraph.eq(&deployment.subgraph))
+            .get_result::<(f32, BigDecimal, BigDecimal, BigDecimal, BigDecimal)>(conn)
+            .optional()?;
+        let (row_count, total_bytes, index_bytes, toast_bytes, table_bytes) = match sizes {
+            Some((row_count, total_bytes, index_bytes, toast_bytes, table_bytes)) => (
+                Some(row_count),
+                Some(total_bytes),
+                Some(index_bytes),
+                Some(toast_bytes),
+                Some(table_bytes),
+            ),
+            None => (None, None, None, None, None),
+        };
+        let row_count = row_count.map(|f| BigDecimal::from(f.floor() as f64));
+
+        diesel::insert_into(rd::table)
+            .values((
+                rd::deployment.eq(&deployment.subgraph),
+                rd::schema_name.eq(&deployment.name),
+                rd::created_at.eq(created_at),
+                rd::subgraphs.eq(subgraphs),
+                rd::entity_count.eq(entity_count),
+                rd::latest_ethereum_block_number.eq(latest_block_number),
+                rd::row_count.eq(row_count),
+                rd::total_bytes.eq(total_bytes),
+                rd::index_bytes.eq(index_bytes),
+                rd::toast_bytes.eq(toast_bytes),
+                rd::table_bytes.eq(table_bytes),
+            ))
+            .execute(conn)?;
+        Ok(entity_count)
+    }
+
+    fn remove_deployment(
+        conn: &PgConnection,
+        deployment: &DeploymentSchema,
+    ) -> Result<(i32, i32), StoreError> {
+        use crate::entities::public::deployment_schemas as ds;
 
         // The query in this file was generated by running 'make'
         // in the 'sql/' subdirectory
@@ -138,18 +226,11 @@ impl RemoveDeploymentsJob {
             .execute(conn)?;
 
         // Remove any subgraph versions referring to this deployment
-        diesel::delete(v::table)
-            .filter(v::deployment.eq(&deployment.subgraph))
-            .execute(conn)?;
+        let (created_at, subgraphs) = Self::remove_versions(conn, deployment)?;
 
-        // FIXME: Must be relational storage
-        // 0. Lookup schema name
-        // 1. Remove metadata
-        // 2. Remove schema
-        // 3.   delete from deployment_schemas where subgraph = sid;
-        // 4.   delete from subgraphs.subgraph_version where deployment = sid;
+        let entity_count = Self::record_removal(conn, deployment, created_at, subgraphs)?;
 
-        Ok(metadata_count)
+        Ok((entity_count.unwrap_or(0), metadata_count))
     }
 
     fn removal_loop(&self, logger: &Logger) -> Result<(), StoreError> {
@@ -159,18 +240,17 @@ impl RemoveDeploymentsJob {
 
         let conn = self.store.get_conn()?;
         let start = Instant::now();
+
         while let Some(deployment) = Self::next_removable_deployment(&conn)? {
             info!(logger, "Remove unused deployment"; "deployment" => &deployment.subgraph);
-            let res = conn.transaction(|| Self::remove_deployment(&conn, &deployment));
-            match res {
-                Err(e) => return Err(e),
-                Ok(metadata_count) => {
-                    info!(logger, "Removed unused deployment";
-                          "deployment" => &deployment.subgraph,
-                          "schema" => &deployment.name,
-                          "metadata_count" => metadata_count);
-                }
-            }
+            let (entity_count, metadata_count) =
+                conn.transaction(|| Self::remove_deployment(&conn, &deployment))?;
+            info!(logger, "Removed unused deployment";
+                    "deployment" => &deployment.subgraph,
+                    "schema" => &deployment.name,
+                    "entity_count" => entity_count,
+                    "metadata_count" => metadata_count);
+
             if start.elapsed() > TIME_LIMIT {
                 return Ok(());
             }
@@ -186,7 +266,7 @@ impl Job for RemoveDeploymentsJob {
 
     fn run(&self, logger: &Logger) {
         if let Err(e) = self.removal_loop(logger) {
-            error!(logger, "Remove unused deployments failed: {}", e);
+            error!(logger, "Job `{}` failed: {}", self.name(), e);
         }
     }
 }

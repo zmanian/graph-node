@@ -114,6 +114,40 @@ table! {
     }
 }
 
+table! {
+    info.subgraph_sizes(subgraph) {
+        subgraph -> Text,
+        name -> Text,
+        version -> Text,
+        row_estimate -> Float,
+        total_bytes -> Numeric,
+        index_bytes -> Numeric,
+        toast_bytes -> Numeric,
+        table_bytes -> Numeric,
+    }
+}
+
+table! {
+    removed_deployments(id) {
+        id -> Integer,
+        deployment -> Text,
+        removed_at -> Timestamp,
+
+        schema_name -> Text,
+        created_at -> Nullable<Integer>,
+        subgraphs -> Text,
+
+        row_count -> Nullable<Numeric>,
+        entity_count -> Nullable<Integer>,
+        latest_ethereum_block_number -> Nullable<Integer>,
+
+        total_bytes -> Nullable<Numeric>,
+        index_bytes -> Nullable<Numeric>,
+        toast_bytes -> Nullable<Numeric>,
+        table_bytes -> Nullable<Numeric>,
+    }
+}
+
 use crate::entities::public::deployment_schemas;
 
 allow_tables_to_appear_in_same_query!(
