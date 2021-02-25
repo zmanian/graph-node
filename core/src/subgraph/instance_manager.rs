@@ -5,6 +5,8 @@ use lazy_static::lazy_static;
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::sync::{Arc, RwLock};
 use std::time::Instant;
+use std::str::FromStr;
+
 
 use graph::components::store::{BlockStore, ModificationsAndCache};
 use graph::components::subgraph::{MappingError, ProofOfIndexing, SharedProofOfIndexing};
@@ -35,6 +37,13 @@ lazy_static! {
     // Used for testing Graph Node itself.
     pub static ref DISABLE_FAIL_FAST: bool =
         std::env::var("GRAPH_DISABLE_FAIL_FAST").is_ok();
+
+    // Default to an ancestor count of 50 blocks
+    static ref INITIAL_BLOCK_SCAN_RANGE: u64 = std::env::var("INITIAL_BLOCK_SCAN_RANGE")
+    .ok()
+    .map(|s| u64::from_str(&s)
+            .unwrap_or_else(|_| panic!("failed to parse env var INITIAL_BLOCK_SCAN_RANGE")))
+    .unwrap_or(50);    
 }
 
 type SharedInstanceKeepAliveMap = Arc<RwLock<HashMap<SubgraphDeploymentId, CancelGuard>>>;
@@ -475,6 +484,7 @@ where
                 ctx.state.block_filter.clone(),
                 ctx.inputs.include_calls_in_blocks,
                 ctx.block_stream_metrics.clone(),
+                *INITIAL_BLOCK_SCAN_RANGE,
             )
             .map_err(CancelableError::Error)
             .cancelable(&block_stream_canceler, || CancelableError::Cancel)

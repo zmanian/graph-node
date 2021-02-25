@@ -56,6 +56,13 @@ lazy_static! {
         .map(|s| u64::from_str(&s)
              .unwrap_or_else(|_| panic!("failed to parse env var ETHEREUM_ANCESTOR_COUNT")))
         .unwrap_or(50);
+
+        // Default to an ancestor count of 50 blocks
+        static ref INITIAL_BLOCK_SCAN_RANGE: u64 = env::var("INITIAL_BLOCK_SCAN_RANGE")
+        .ok()
+        .map(|s| u64::from_str(&s)
+             .unwrap_or_else(|_| panic!("failed to parse env var INITIAL_BLOCK_SCAN_RANGE")))
+        .unwrap_or(50);
 }
 
 git_testament!(TESTAMENT);
@@ -326,6 +333,7 @@ async fn main() {
                 node_id.clone(),
                 *REORG_THRESHOLD,
                 metrics_registry.clone(),
+                *INITIAL_BLOCK_SCAN_RANGE,
             );
             let runtime_host_builder = WASMRuntimeHostBuilder::new(
                 eth_networks.clone(),

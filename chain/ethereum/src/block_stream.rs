@@ -158,6 +158,7 @@ where
         reorg_threshold: u64,
         logger: Logger,
         metrics: Arc<BlockStreamMetrics>,
+        initial_block_scan_range: u64,
     ) -> Self {
         BlockStream {
             state: BlockStreamState::BeginReconciliation,
@@ -179,8 +180,8 @@ where
                 metrics,
 
                 // A high number here forces a slow start, with a range of 1.
-                previous_triggers_per_block: 1_000_000.0,
-                previous_block_range_size: 1,
+                previous_triggers_per_block: 1_000.0,
+                previous_block_range_size: initial_block_scan_range,
                 max_block_range_size: *MAX_BLOCK_RANGE_SIZE,
             },
         }
@@ -728,6 +729,7 @@ pub struct BlockStreamBuilder<S, B, M> {
     node_id: NodeId,
     reorg_threshold: u64,
     metrics_registry: Arc<M>,
+    initial_block_scan_range: u64,
 }
 
 impl<S, B, M> Clone for BlockStreamBuilder<S, B, M> {
@@ -739,6 +741,7 @@ impl<S, B, M> Clone for BlockStreamBuilder<S, B, M> {
             node_id: self.node_id.clone(),
             reorg_threshold: self.reorg_threshold,
             metrics_registry: self.metrics_registry.clone(),
+            initial_block_scan_range: self.initial_block_scan_range,
         }
     }
 }
@@ -756,6 +759,7 @@ where
         node_id: NodeId,
         reorg_threshold: u64,
         metrics_registry: Arc<M>,
+        initial_block_scan_range: u64,
     ) -> Self {
         BlockStreamBuilder {
             subgraph_store,
@@ -764,6 +768,7 @@ where
             node_id,
             reorg_threshold,
             metrics_registry,
+            initial_block_scan_range,
         }
     }
 }
@@ -787,6 +792,7 @@ where
         block_filter: EthereumBlockFilter,
         include_calls_in_blocks: bool,
         metrics: Arc<BlockStreamMetrics>,
+        initial_block_scan_range: u64,
     ) -> Self::Stream {
         let logger = logger.new(o!(
             "component" => "BlockStream",
@@ -829,6 +835,7 @@ where
             self.reorg_threshold,
             logger,
             metrics,
+            initial_block_scan_range,
         )
     }
 }

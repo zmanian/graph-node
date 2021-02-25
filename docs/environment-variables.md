@@ -43,6 +43,10 @@ those.
   database. In production environments, it will cause multiple downloads of
   the same blocks and therefore slow the system down. This setting can not
   be used if the store uses more than one shard.
+- `INITIAL_BLOCK_SCAN_RANGE`: Numer of blocks to scan when the node starts up
+  and the number of blocks to scan when the blockstream resets after a
+  subgraph adds a dynamic data source.
+
 
 ## Running mapping handlers
 

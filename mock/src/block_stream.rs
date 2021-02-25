@@ -58,6 +58,7 @@ impl BlockStreamBuilder for MockBlockStreamBuilder {
         _: EthereumBlockFilter,
         _: bool,
         _: Arc<BlockStreamMetrics>,
+        _initial_block_scan_range:u64,
     ) -> Self::Stream {
         MockBlockStream::new()
     }
