@@ -180,7 +180,7 @@ where
                 metrics,
 
                 // A high number here forces a slow start, with a range of 1.
-                previous_triggers_per_block: 1_000.0,
+                previous_triggers_per_block: 10_000.0,
                 previous_block_range_size: initial_block_scan_range,
                 max_block_range_size: *MAX_BLOCK_RANGE_SIZE,
             },
